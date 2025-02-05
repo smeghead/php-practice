@@ -10,6 +10,8 @@ final class Board {
     private int $xLength;
     private int $yLength;
 
+    private array $unfixedCells = [];
+
     /**
      * @param list<string> $lines
      */
@@ -18,6 +20,9 @@ final class Board {
             $row = [];
             foreach (str_split($line) as $x => $char) {
                 $row[] = new Cell($x, $y, $char);
+                if ($char === 'A') {
+                    $this->unfixedCells[sprintf('%d-%d', $x, $y)] = 0;
+                }
             }
             $this->matrix[] = $row;
         }
@@ -30,13 +35,13 @@ final class Board {
         if ($x < 0) {
             return $wall;
         }
-        if ($x > $this->xLength) {
+        if ($x >= $this->xLength) {
             return $wall;
         }
         if ($y < 0) {
             return $wall;
         }
-        if ($y > $this->yLength) {
+        if ($y >= $this->yLength) {
             return $wall;
         }
         return $this->matrix[$y][$x];
@@ -65,6 +70,7 @@ final class Board {
             return;
         }
         $this->getCell($x, $y)->value = $value;
+        $this->unfixedCells[sprintf('%d-%d', $x, $y)] = $value;
     }
 
     public function setFixed(int $x, int $y): void {
@@ -73,28 +79,82 @@ final class Board {
             return;
         }
         $this->getCell($x, $y)->fixed = true;
+        unset($this->unfixedCells[sprintf('%d-%d', $x, $y)]);
     }
 
     public function getUnfixedSmallestCell(): ?Cell {
-        $cell = new Cell(-1, -1, '.');
-        $cell->value = PHP_INT_MAX;
+        asort($this->unfixedCells);
+        if (count($this->unfixedCells) === 0) {
+            return null;
+        }
+        $key = array_keys($this->unfixedCells)[0];
+        if (preg_match('/([0-9]+)-([0-9]+)/', $key, $matches)) {
+            return $this->getCell(intval($matches[1]), intval($matches[2]));
+        }
+        return null;
+    }
+
+    private function searchCell(Callable $fn): ?Cell {
         foreach (range(0, $this->xLength - 1) as $x) {
             foreach (range(0, $this->yLength - 1) as $y) {
                 $target = $this->getCell($x, $y);
-                if ($target->isWall) {
-                    continue;
-                }
-                if ($target->fixed) {
-                    continue;
-                }
-                if ($cell->value > $target->value) {
-                    $cell = $target;
+                if ($fn($target)) {
+                    return $target;
                 }
             }
         }
-        if ($cell->value === PHP_INT_MAX) {
-            return null;
+        return null;
+    }
+
+    public function spreadGoal(): void {
+        $goal = $this->searchCell(fn($c) => $c->isGoal);
+
+        $moveFns = [
+            fn($c) => $this->getCell($c->x + 1, $c->y),
+            fn($c) => $this->getCell($c->x - 1, $c->y),
+            fn($c) => $this->getCell($c->x, $c->y + 1),
+            fn($c) => $this->getCell($c->x, $c->y - 1),
+        ];
+        foreach ($moveFns as $fn) {
+            $cell = $goal;
+            while ($cell->isWall === false) {
+                $cell->isGoal = true;
+                $cell = $fn($cell);
+            }
+        }        
+    }
+
+    public function seek(): ?int {
+        $smallest = $this->getUnfixedSmallestCell();
+        if ($smallest == null) {
+            return -1;
         }
-        return $cell;
+        $this->setFixed($smallest->x, $smallest->y);
+        if ($smallest->isGoal) {
+            return $smallest->value;
+        }
+
+        $neighbors = $this->getNeighborhoodCells($smallest->x, $smallest->y);
+        foreach ($neighbors as $n) {
+            if ($n->value > $smallest->value + 1) {
+                $this->setValue($n->x, $n->y, $smallest->value + 1);
+                if ($n->isGoal) {
+                    return $n->value;
+                }
+            }
+        }
+        return null;
+    }
+
+    public function start(): int {
+        $this->spreadGoal();
+
+        while (true) {
+            $answer = $this->seek();
+            if ($answer !== null) {
+                return $answer;
+            }
+        }
+        return -1;
     }
 }
